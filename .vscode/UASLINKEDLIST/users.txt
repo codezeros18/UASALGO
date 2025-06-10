@@ -1,1 +1,2 @@
-1|lintang|lintang@gmail.com|lintang
+2|nanda|nanda@gmail.com|nanda
+1|lintang|lintang|lintang

@@ -13,6 +13,11 @@ typedef struct User {
     struct User *next;
 } User;
 
+typedef struct LikeNode {
+    int user_id;
+    struct LikeNode *next;
+} LikeNode;
+
 typedef struct Post {
     int id;
     int user_id;
@@ -20,6 +25,7 @@ typedef struct Post {
     char media[MAX_STRING];
     int likes;
     struct Post *next;
+    LikeNode *likeList; // Tambahkan ini
 } Post;
 
 typedef struct Comment {
@@ -42,6 +48,18 @@ typedef struct NotifNode {
     struct NotifNode *next;
 } NotifNode;
 
+// Tambahkan struct BST untuk User
+typedef struct UserBSTNode {
+    struct User *user;
+    struct UserBSTNode *left, *right;
+} UserBSTNode;
+
+// Tambahkan struct BST untuk Comment
+typedef struct CommentBSTNode {
+    struct Comment *comment;
+    struct CommentBSTNode *left, *right;
+} CommentBSTNode;
+
 typedef struct {
     User *users;
     Post *posts;
@@ -54,9 +72,147 @@ typedef struct {
 
     UndoNode *undoTop;
     NotifNode *notifFront, *notifRear;
+
+    // Tambahkan di AppState:
+    UserBSTNode *userBST; // Tambahkan pointer ke root BST User
+    CommentBSTNode *commentBST; // Tambahkan pointer ke root BST Comment
 } AppState;
 
-// --- Stack & Queue ---
+// ======================= BST untuk Post =========================
+typedef struct PostBSTNode {
+    Post *post;
+    struct PostBSTNode *left, *right;
+} PostBSTNode;
+
+
+// [BST] Insert node ke BST Post
+PostBSTNode* insert_post_bst(PostBSTNode *root, Post *post) {
+    if (!root) {
+        PostBSTNode *node = (PostBSTNode*)malloc(sizeof(PostBSTNode));
+        node->post = post;
+        node->left = node->right = NULL;
+        return node;
+    }
+    if (post->id < root->post->id)
+        root->left = insert_post_bst(root->left, post);
+    else if (post->id > root->post->id)
+        root->right = insert_post_bst(root->right, post);
+    return root;
+}
+
+// [BST] Cari node pada BST Post
+Post* search_post_bst(PostBSTNode *root, int id) {
+    if (!root) return NULL;
+    if (id == root->post->id) return root->post;
+    if (id < root->post->id) return search_post_bst(root->left, id);
+    else return search_post_bst(root->right, id);
+}
+
+// [BST] Cari node minimum pada BST Post
+PostBSTNode* find_min_bst(PostBSTNode *root) {
+    while (root && root->left) root = root->left;
+    return root;
+}
+
+// [BST] Hapus node pada BST Post
+PostBSTNode* delete_post_bst(PostBSTNode *root, int id) {
+    if (!root) return NULL;
+    if (id < root->post->id)
+        root->left = delete_post_bst(root->left, id);
+    else if (id > root->post->id)
+        root->right = delete_post_bst(root->right, id);
+    else {
+        if (!root->left && !root->right) { // Leaf
+            free(root);
+            return NULL;
+        } else if (!root->left || !root->right) { // 1 child
+            PostBSTNode *child = root->left ? root->left : root->right;
+            free(root);
+            return child;
+        } else { // 2 children
+            PostBSTNode *succ = find_min_bst(root->right);
+            root->post = succ->post;
+            root->right = delete_post_bst(root->right, succ->post->id);
+        }
+    }
+    return root;
+}
+
+// [BST] Bebaskan seluruh node BST Post
+void free_post_bst(PostBSTNode *root) {
+    if (!root) return;
+    free_post_bst(root->left);
+    free_post_bst(root->right);
+    free(root);
+}
+
+// [BST] Build BST dari linked list Post
+PostBSTNode* build_post_bst(Post *head) {
+    PostBSTNode *root = NULL;
+    while (head) {
+        root = insert_post_bst(root, head);
+        head = head->next;
+    }
+    return root;
+}
+
+// ======================= Heap untuk Likes =========================
+typedef struct {
+    Post **arr;
+    int size;
+    int capacity;
+} PostHeap;
+
+// [Heap] Heapify array Post berdasarkan likes
+void heapify(PostHeap *heap, int i) {
+    int largest = i;
+    int l = 2*i+1, r = 2*i+2;
+    if (l < heap->size && heap->arr[l]->likes > heap->arr[largest]->likes)
+        largest = l;
+    if (r < heap->size && heap->arr[r]->likes > heap->arr[largest]->likes)
+        largest = r;
+    if (largest != i) {
+        Post *tmp = heap->arr[i];
+        heap->arr[i] = heap->arr[largest];
+        heap->arr[largest] = tmp;
+        heapify(heap, largest);
+    }
+}
+
+// [Heap] Build max-heap dari linked list Post
+void build_post_heap(PostHeap *heap, Post *head) {
+    int n = 0;
+    Post *p = head;
+    while (p) { n++; p = p->next; }
+    heap->arr = (Post**)malloc(sizeof(Post*) * n);
+    heap->size = n;
+    heap->capacity = n;
+    p = head;
+    for (int i = 0; i < n; i++) {
+        heap->arr[i] = p;
+        p = p->next;
+    }
+    for (int i = n/2-1; i >= 0; i--)
+        heapify(heap, i);
+}
+
+// [Heap] Ambil elemen max (likes terbanyak) dari heap
+Post* extract_max(PostHeap *heap) {
+    if (heap->size == 0) return NULL;
+    Post *max = heap->arr[0];
+    heap->arr[0] = heap->arr[--heap->size];
+    heapify(heap, 0);
+    return max;
+}
+
+// [Heap] Bebaskan array heap
+void free_post_heap(PostHeap *heap) {
+    free(heap->arr);
+}
+
+// ======================= Stack & Queue =========================
+
+// [Stack] Push ke undo stack (linked list)
 void pushUndo(AppState *app, Post p) {
     if (p.id == 0) return;
     UndoNode *node = (UndoNode*)malloc(sizeof(UndoNode));
@@ -65,7 +221,7 @@ void pushUndo(AppState *app, Post p) {
     app->undoTop = node;
 }
 
-// Pop the top post from the undo stack
+// [Stack] Pop dari undo stack
 Post popUndo(AppState *app) {
     if (!app->undoTop) {
         Post empty = {0};
@@ -78,12 +234,12 @@ Post popUndo(AppState *app) {
     return p;
 }
 
-// Check if the undo stack is empty
+// [Stack] Cek apakah undo stack kosong
 int isUndoEmpty(AppState *app) {
     return app->undoTop == NULL;
 }
 
-// Enqueue a notification message
+// [Queue] Enqueue notifikasi ke queue (linked list)
 void enqueueNotif(AppState *app, const char *msg) {
     NotifNode *node = (NotifNode*)malloc(sizeof(NotifNode));
     strncpy(node->msg, msg, sizeof(node->msg));
@@ -96,7 +252,7 @@ void enqueueNotif(AppState *app, const char *msg) {
     app->notifRear = node;
 }
 
-// Dequeue a notification message
+// [Queue] Tampilkan seluruh notifikasi (dequeue)
 void showNotifications(AppState *app) {
     printf("\n==================[ Notifications ]==================\n");
     NotifNode *curr = app->notifFront;
@@ -118,7 +274,7 @@ void insert_user(AppState *app, User u) {
     app->user_count++;
 }
 
-// Insert a new post into the linked list
+// [Linked List] Insert post ke linked list
 void insert_post(AppState *app, Post p) {
     Post *newPost = (Post*)malloc(sizeof(Post));
     *newPost = p;
@@ -148,7 +304,7 @@ void load_users(AppState *app) {
     fclose(file);
 }
 
-// Load posts from file and insert into linked list
+// [File I/O] Load posts dari file ke linked list
 void load_posts(AppState *app) {
     FILE *file = fopen("posts.txt", "r");
     if (!file) return;
@@ -163,7 +319,7 @@ void load_posts(AppState *app) {
     fclose(file);
 }
 
-// Load comments from file and insert into linked list
+// [File I/O] Load comments dari file ke linked list
 void load_comments(AppState *app) {
     FILE *file = fopen("comments.txt", "r");
     if (!file) return;
@@ -175,7 +331,7 @@ void load_comments(AppState *app) {
     fclose(file);
 }
 
-// Save users, posts, and comments to files
+// [File I/O] Save users ke file
 void save_users(AppState *app) {
     FILE *file = fopen("users.txt", "w");
     User *u = app->users;
@@ -186,7 +342,7 @@ void save_users(AppState *app) {
     fclose(file);
 }
 
-// Save posts and comments to files
+// [File I/O] Save posts ke file
 void save_posts(AppState *app) {
     FILE *file = fopen("posts.txt", "w");
     Post *p = app->posts;
@@ -197,7 +353,7 @@ void save_posts(AppState *app) {
     fclose(file);
 }
 
-// Save comments to file
+// [File I/O] Save comments ke file
 void save_comments(AppState *app) {
     FILE *file = fopen("comments.txt", "w");
     Comment *c = app->comments;
@@ -234,6 +390,9 @@ void log_activity(const char *msg) {
     }
 }
 
+// Function prototype for search_user_bst
+User* search_user_bst(UserBSTNode *root, const char *username);
+
 // Login
 int login(AppState *app) {
     char uname[MAX_STRING], pass[MAX_STRING];
@@ -241,16 +400,13 @@ int login(AppState *app) {
     scanf(" %[^\n]", uname);
     printf("Password: ");
     scanf(" %[^\n]", pass);
-    User *u = app->users;
-    while (u) {
-        if (strcmp(u->username, uname) == 0 && strcmp(u->password, pass) == 0) {
-            printf("Login successful!\n");
-            char logmsg[MAX_STRING * 2];
-            snprintf(logmsg, sizeof(logmsg), "User %s logged in.", uname);
-            log_activity(logmsg);
-            return u->id;
-        }
-        u = u->next;
+    User *u = search_user_bst(app->userBST, uname);
+    if (u && strcmp(u->password, pass) == 0) {
+        printf("Login successful!\n");
+        char logmsg[MAX_STRING * 2];
+        snprintf(logmsg, sizeof(logmsg), "User %s logged in.", uname);
+        log_activity(logmsg);
+        return u->id;
     }
     printf("Login failed.\n");
     return -1;
@@ -273,32 +429,46 @@ void create_post(AppState *app) {
 }
 
 // View posts
+// Function prototype for bubble_sort_posts_by_id
+void bubble_sort_posts_by_id(Post **arr, int n);
+
 void view_posts(AppState *app) {
-    printf("\n====================[ Daftar Postingan ]====================\n");
+    int n = 0;
     Post *p = app->posts;
-    int ada = 0;
-    while (p) {
-        if (p->id == 0) { p = p->next; continue; }
-        ada = 1;
+    while (p) { n++; p = p->next; }
+    if (n == 0) {
+        printf("\n>> Belum ada postingan.\n");
+        return;
+    }
+    Post **arr = (Post**)malloc(sizeof(Post*) * n);
+    p = app->posts;
+    for (int i = 0; i < n; i++) {
+        arr[i] = p;
+        p = p->next;
+    }
+    bubble_sort_posts_by_id(arr, n);
+    printf("\n====================[ Daftar Postingan ]====================\n");
+    for (int i = 0; i < n; i++) {
         printf("\n------------------------------------------------------------\n");
-        printf("[%d] User %d: %s (%s) Likes: %d\n", p->id, p->user_id, p->content, p->media, p->likes);
+        printf("[%d] User %d: %s (%s) Likes: %d\n", arr[i]->id, arr[i]->user_id, arr[i]->content, arr[i]->media, arr[i]->likes);
         // Print comments (reverse order)
         int stack_count = 0;
         Comment *stack[1000];
         Comment *c = app->comments;
         while (c) {
-            if (c->post_id == p->id) stack[stack_count++] = c;
+            if (c->post_id == arr[i]->id) stack[stack_count++] = c;
             c = c->next;
         }
         while (stack_count > 0) {
             Comment *cc = stack[--stack_count];
             printf("  - Comment from User %d: %s\n", cc->user_id, cc->text);
         }
-    p = p->next;
     }
-    if (!ada) printf("\n>> Belum ada postingan.\n");
     printf("\n============================================================\n");
+    free(arr);
 }
+
+// [Linked List] Like post
 void like_post(AppState *app) {
     int pid;
     printf("Enter post ID to like: ");
@@ -306,8 +476,22 @@ void like_post(AppState *app) {
     Post *p = app->posts;
     while (p) {
         if (p->id == pid) {
+            // Cek apakah user sudah like
+            LikeNode *ln = p->likeList;
+            while (ln) {
+                if (ln->user_id == app->current_user_id) {
+                    printf("Anda sudah like post ini.\n");
+                    return;
+                }
+                ln = ln->next;
+            }
+            // Tambah like
+            LikeNode *newLike = (LikeNode*)malloc(sizeof(LikeNode));
+            newLike->user_id = app->current_user_id;
+            newLike->next = p->likeList;
+            p->likeList = newLike;
             p->likes++;
-            save_posts(app);
+            save_posts(app); // (opsional: simpan likeList ke file jika ingin persistent)
             printf("Post liked!\n");
             char notif[MAX_STRING * 2];
             snprintf(notif, sizeof(notif), "You liked post ID %d", p->id);
@@ -318,6 +502,8 @@ void like_post(AppState *app) {
     }
     printf("Post not found.\n");
 }
+
+// [Linked List] Unlike post
 void unlike_post(AppState *app) {
     int pid;
     printf("\nEnter post ID to unlike: ");
@@ -325,26 +511,33 @@ void unlike_post(AppState *app) {
     Post *p = app->posts;
     while (p) {
         if (p->id == pid) {
-            if (p->user_id != app->current_user_id) {
-                printf(">> Anda hanya bisa unlike post milik sendiri!\n");
-                return;
+            LikeNode **ln = &p->likeList;
+            while (*ln) {
+                if ((*ln)->user_id == app->current_user_id) {
+                    // Hapus LikeNode milik user ini
+                    LikeNode *del = *ln;
+                    *ln = del->next;
+                    free(del);
+                    p->likes--;
+                    save_posts(app);
+                    printf("Post unliked!\n");
+                    char notif[MAX_STRING * 2];
+                    snprintf(notif, sizeof(notif), "You unliked post ID %d", p->id);
+                    enqueueNotif(app, notif);
+                    return;
+                }
+                ln = &(*ln)->next;
             }
-            if (p->likes > 0) {
-                p->likes--;
-                save_posts(app);
-                printf("Post unliked!\n");
-                char notif[MAX_STRING * 2];
-                snprintf(notif, sizeof(notif), "You unliked post ID %d", p->id);
-                enqueueNotif(app, notif);
-            } else {
-                printf("Post already has 0 likes.\n");
-            }
+            // Jika tidak ditemukan LikeNode user ini
+            printf("Anda belum like post ini.\n");
             return;
         }
         p = p->next;
     }
     printf("Post not found.\n");
 }
+
+// [Linked List] Comment post
 void comment_post(AppState *app) {
     int pid;
     Comment c;
@@ -363,10 +556,14 @@ void comment_post(AppState *app) {
     snprintf(notif, sizeof(notif), "You commented on post ID %d", pid);
     enqueueNotif(app, notif);
 }
+
+// [Linked List & Stack] Delete post (dari linked list, push ke undo stack)
 void delete_post(AppState *app) {
     int pid;
     printf("Enter post ID to delete: ");
     scanf("%d", &pid);
+
+    // Hapus dari linked list
     Post **pp = &app->posts;
     while (*pp) {
         if ((*pp)->id == pid && (*pp)->user_id == app->current_user_id) {
@@ -386,6 +583,8 @@ void delete_post(AppState *app) {
     }
     printf("Post not found or you are not the owner.\n");
 }
+
+// [Linked List] Edit post
 void edit_post(AppState *app) {
     int pid;
     printf("Enter post ID to edit: ");
@@ -405,76 +604,24 @@ void edit_post(AppState *app) {
     }
     printf("Post not found or unauthorized.\n");
 }
-void search_by_username(AppState *app) {
-    char uname[MAX_STRING];
-    printf("Enter username to search posts: ");
-    scanf(" %[^\n]", uname);
-    int uid = -1;
-    User *u = app->users;
-    while (u) {
-        if (strcmp(u->username, uname) == 0) {
-            uid = u->id;
-            break;
-        }
-        u = u->next;
-    }
-    if (uid == -1) {
-        printf("Username not found.\n");
+
+// [Heap] Tampilkan top 3 post by likes
+void sort_and_show_posts_by_likes(AppState *app) {
+    if (!app->posts) {
+        printf("No posts.\n");
         return;
     }
-    Post *p = app->posts;
-    while (p) {
-        if (p->user_id == uid) {
-            printf("[%d] %s (%s) Likes: %d\n", p->id, p->content, p->media, p->likes);
-        }
-        p = p->next;
+    PostHeap heap;
+    build_post_heap(&heap, app->posts);
+    printf("Top 3 Posts by Likes:\n");
+    for (int i = 0; i < 3 && heap.size > 0; i++) {
+        Post *p = extract_max(&heap);
+        printf("[%d] User %d: %s (%s) Likes: %d\n", p->id, p->user_id, p->content, p->media, p->likes);
     }
-}
-void view_own_posts(AppState *app) {
-    printf("\n=================[ Postingan Anda ]==================\n");
-    Post *p = app->posts;
-    int ada = 0;
-    while (p) {
-        if (p->user_id == app->current_user_id) {
-            ada = 1;
-            printf("[%d] %s (%s) Likes: %d\n", p->id, p->content, p->media, p->likes);
-        }
-        p = p->next;
-    }
-    if (!ada) printf(">> Anda belum membuat postingan.\n");
-    printf("=====================================================\n");
+    free_post_heap(&heap);
 }
 
-// Function prototype for quick_sort_posts
-void quick_sort_posts(Post **arr, int low, int high);
-
-// --- Heap untuk Top Liked Posts ---
-void top_liked_posts(AppState *app) {
-    printf("\n==================[ Top 3 Posts ]==================\n");
-    int n = 0;
-    Post *p = app->posts;
-    while (p) { n++; p = p->next; }
-    if (n == 0) {
-        printf("\n>> Tidak ada post.\n");
-        printf("===================================================\n");
-        return;
-    }
-    Post **arr = (Post**)malloc(sizeof(Post*) * n);
-    p = app->posts;
-    for (int i = 0; i < n; i++) {
-        arr[i] = p;
-        p = p->next;
-    }
-    // Urutkan dengan quick sort (descending by likes)
-    quick_sort_posts(arr, 0, n-1);
-    for (int i = 0; i < 3 && i < n; i++) {
-        printf("\n---------------------------------------------------\n");
-        printf("[%d] User %d: %s (%s) Likes: %d\n", arr[i]->id, arr[i]->user_id, arr[i]->content, arr[i]->media, arr[i]->likes);
-        printf("---------------------------------------------------\n");
-    }
-    printf("===================================================\n");
-    free(arr);
-}
+// [Stack] Undo delete post
 void undo_delete_post(AppState *app) {
     if (isUndoEmpty(app)) {
         printf("No post to undo.\n");
@@ -493,185 +640,26 @@ void undo_delete_post(AppState *app) {
     enqueueNotif(app, notif);
 }
 
-// --- BST Node untuk Post berdasarkan likes ---
-typedef struct PostBSTNode {
-    Post *post;
-    struct PostBSTNode *left, *right;
-} PostBSTNode;
-
-PostBSTNode* post_bst_insert(PostBSTNode *root, Post *post) {
-    if (!root) {
-        PostBSTNode *node = (PostBSTNode*)malloc(sizeof(PostBSTNode));
-        node->post = post;
-        node->left = node->right = NULL;
-        return node;
-    }
-    if (post->likes < root->post->likes)
-        root->left = post_bst_insert(root->left, post);
-    else
-        root->right = post_bst_insert(root->right, post);
-    return root;
-}
-void post_bst_inorder(PostBSTNode *root) {
-    if (!root) return;
-    post_bst_inorder(root->left);
-    printf("[%d] %s Likes: %d\n", root->post->id, root->post->content, root->post->likes);
-    post_bst_inorder(root->right);
-}
-PostBSTNode* post_bst_search(PostBSTNode *root, int likes) {
-    if (!root || root->post->likes == likes) return root;
-    if (likes < root->post->likes) return post_bst_search(root->left, likes);
-    return post_bst_search(root->right, likes);
-}
-PostBSTNode* post_bst_find_min(PostBSTNode* root) {
-    while (root && root->left) root = root->left;
-    return root;
-}
-PostBSTNode* post_bst_delete(PostBSTNode* root, int likes, int *deleted) {
-    if (!root) return NULL;
-    if (likes < root->post->likes)
-        root->left = post_bst_delete(root->left, likes, deleted);
-    else if (likes > root->post->likes)
-        root->right = post_bst_delete(root->right, likes, deleted);
-    else {
-        // Node ditemukan
-        *deleted = 1;
-        // 1. Leaf node
-        if (!root->left && !root->right) {
-            free(root);
-            return NULL;
-        }
-        // 2. Satu child
-        if (!root->left) {
-            PostBSTNode *temp = root->right;
-            free(root);
-            return temp;
-        }
-        if (!root->right) {
-            PostBSTNode *temp = root->left;
-            free(root);
-            return temp;
-        }
-        // 3. Dua children
-        PostBSTNode *succ = post_bst_find_min(root->right);
-        root->post = succ->post;
-        root->right = post_bst_delete(root->right, succ->post->likes, deleted);
-    }
-    return root;
-}
-void post_bst_free(PostBSTNode *root) {
-    if (!root) return;
-    post_bst_free(root->left);
-    post_bst_free(root->right);
-    free(root);
-}
-void show_posts_sorted_by_likes(AppState *app) {
-    PostBSTNode *bst = NULL;
-    Post *p = app->posts;
-    while (p) {
-        bst = post_bst_insert(bst, p);
-        p = p->next;
-    }
-    printf("Semua post urut likes (inorder BST):\n");
-    post_bst_inorder(bst);
-    post_bst_free(bst);
-}
-void search_post_by_likes(AppState *app) {
-    int likes;
-    printf("Masukkan jumlah likes yang dicari: ");
-    scanf("%d", &likes);
-    PostBSTNode *bst = NULL;
-    Post *p = app->posts;
-    while (p) {
-        bst = post_bst_insert(bst, p);
-        p = p->next;
-    }
-    PostBSTNode *found = post_bst_search(bst, likes);
-    if (found)
-        printf("Ditemukan: [%d] %s Likes: %d\n", found->post->id, found->post->content, found->post->likes);
-    else
-        printf("Tidak ada post dengan likes %d\n", likes);
-    post_bst_free(bst);
-}
-
-// --- Sorting & Binary Search pada Post ---
-void quick_sort_posts(Post **arr, int low, int high) {
-    if (low < high) {
-        int pivot = arr[high]->likes;
-        int i = low - 1;
-        for (int j = low; j < high; j++) {
-            if (arr[j]->likes > pivot) {
-                i++;
-                Post *tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
-            }
-        }
-        Post *tmp = arr[i+1]; arr[i+1] = arr[high]; arr[high] = tmp;
-        int pi = i+1;
-        quick_sort_posts(arr, low, pi-1);
-        quick_sort_posts(arr, pi+1, high);
-    }
-}
-void sort_and_show_posts_by_likes(AppState *app) {
-    int n = 0;
-    Post *p = app->posts;
-    while (p) { n++; p = p->next; }
-    if (n == 0) {
-        printf("No posts.\n");
-        return;
-    }
-    Post **arr = (Post**)malloc(sizeof(Post*) * n);
-    p = app->posts;
-    for (int i = 0; i < n; i++) {
-        arr[i] = p;
-        p = p->next;
-    }
-    quick_sort_posts(arr, 0, n-1);
-    printf("Posts sorted by likes (descending):\n");
-    for (int i = 0; i < n; i++) {
-        printf("[%d] %s Likes: %d\n", arr[i]->id, arr[i]->content, arr[i]->likes);
-    }
-    free(arr);
-}
-int binary_search_post(Post **arr, int n, int id) {
-    int l = 0, r = n-1;
-    while (l <= r) {
-        int m = l + (r-l)/2;
-        if (arr[m]->id == id) return m;
-        if (arr[m]->id < id) l = m+1;
-        else r = m-1;
-    }
-    return -1;
-}
+// [BST] Search post by ID (menggunakan BST)
 void search_post_by_id(AppState *app) {
-    int n = 0;
-    Post *p = app->posts;
-    while (p) { n++; p = p->next; }
-    if (n == 0) {
+    if (!app->posts) {
         printf("No posts.\n");
         return;
     }
-    Post **arr = (Post**)malloc(sizeof(Post*) * n);
-    p = app->posts;
-    for (int i = 0; i < n; i++) {
-        arr[i] = p;
-        p = p->next;
-    }
-    // Sort by id ascending (bubble sort)
-    for (int i = 0; i < n-1; i++)
-        for (int j = 0; j < n-i-1; j++)
-            if (arr[j]->id > arr[j+1]->id) {
-                Post *tmp = arr[j]; arr[j] = arr[j+1]; arr[j+1] = tmp;
-            }
     int id;
     printf("Masukkan ID post yang dicari: ");
     scanf("%d", &id);
-    int idx = binary_search_post(arr, n, id);
-    if (idx != -1)
-        printf("Ditemukan: [%d] %s Likes: %d\n", arr[idx]->id, arr[idx]->content, arr[idx]->likes);
+
+    PostBSTNode *root = build_post_bst(app->posts);
+    Post *found = search_post_bst(root, id);
+    if (found)
+        printf("Ditemukan: [%d] %s Likes: %d\n", found->id, found->content, found->likes);
     else
         printf("Post dengan ID %d tidak ditemukan.\n", id);
-    free(arr);
+    free_post_bst(root);
 }
+
+// [BST/Linked List] Search post by username/ID
 void search_post(AppState *app) {
     int opsi;
     printf("Cari post berdasarkan:\n1. Username\n2. ID\nPilih: ");
@@ -706,57 +694,16 @@ void search_post(AppState *app) {
         }
         if (!found) printf("Tidak ada post dari user ini.\n");
     } else if (opsi == 2) {
-        int n = 0;
-        Post *p = app->posts;
-        while (p) { n++; p = p->next; }
-        if (n == 0) {
-            printf("No posts.\n");
-            return;
-        }
-        Post **arr = (Post**)malloc(sizeof(Post*) * n);
-        p = app->posts;
-        for (int i = 0; i < n; i++) {
-            arr[i] = p;
-            p = p->next;
-        }
-        // Sort by id ascending (bubble sort)
-        for (int i = 0; i < n-1; i++)
-            for (int j = 0; j < n-i-1; j++)
-                if (arr[j]->id > arr[j+1]->id) {
-                    Post *tmp = arr[j]; arr[j] = arr[j+1]; arr[j+1] = tmp;
-                }
-        int id;
-        printf("Masukkan ID post yang dicari: ");
-        scanf("%d", &id);
-        int l = 0, r = n-1, idx = -1;
-        while (l <= r) {
-            int m = l + (r-l)/2;
-            if (arr[m]->id == id) { idx = m; break; }
-            if (arr[m]->id < id) l = m+1;
-            else r = m-1;
-        }
-        if (idx != -1)
-            printf("Ditemukan: [%d] %s Likes: %d\n", arr[idx]->id, arr[idx]->content, arr[idx]->likes);
-        else
-            printf("Post dengan ID %d tidak ditemukan.\n", id);
-        free(arr);
+        search_post_by_id(app);
     } else {
         printf("Pilihan tidak valid.\n");
     }
 }
 
-// --- Menu ---
-// Function prototype for pop_top_liked_post
-void pop_top_liked_post(AppState *app);
-// Function prototype for unlike_post_bst
-void unlike_post_bst(AppState *app);
+// [Menu] Menu user setelah login
+void user_menu(AppState *app); // Function prototype
 
-// Function prototype for delete_bst_node_menu
-void delete_bst_node_menu(AppState *app);
-
-// Function prototype for user_menu
-void user_menu(AppState *app);
-
+// [Menu] Menu utama aplikasi
 void main_menu(AppState *app) {
     int choice;
     do {
@@ -784,6 +731,7 @@ void main_menu(AppState *app) {
     } while (1);
 }
 
+// [Menu] Menu user setelah login
 void user_menu(AppState *app) {
     int choice;
     do {
@@ -801,15 +749,9 @@ void user_menu(AppState *app) {
         printf("  9.  View Posts by Likes\n");
         printf(" 10.  Undo Delete Post\n");
         printf(" 11.  Show Notifications\n");
-        printf(" 12.  Top Liked Posts (Heap)\n");
-        printf(" 13.  Hapus Top Liked Post (Heap)\n");
-        printf(" 14.  Tampilkan Post BST (Inorder)\n");
-        printf(" 15.  Cari Post by Likes (BST)\n");
-        printf(" 16.  Unlike Post (BST)\n");
-        printf(" 17.  Hapus Node BST\n");
-        printf(" 18.  Log Out\n");
+        printf(" 12.  Log Out\n");
         printf("-----------------------------------------------------\n");
-        printf("Pilih menu (1-18): ");
+        printf("Pilih menu (1-12): ");
         scanf("%d", &choice);
         printf("=====================================================\n");
         switch (choice) {
@@ -824,17 +766,114 @@ void user_menu(AppState *app) {
             case 9: sort_and_show_posts_by_likes(app); break;
             case 10: undo_delete_post(app); break;
             case 11: showNotifications(app); break;
-            case 12: top_liked_posts(app); break;
-            case 13: pop_top_liked_post(app); break;
-            case 14: show_posts_sorted_by_likes(app); break;
-            case 15: search_post_by_likes(app); break;
-            case 16: unlike_post_bst(app); break;
-            case 17: delete_bst_node_menu(app); break;
-            case 18: app->current_user_id = -1; return;
+            case 12: return;
             default: printf(">> Pilihan tidak valid!\n");
         }
     } while (1);
 }
+
+void bubble_sort_posts_by_id(Post **arr, int n) {
+    for (int i = 0; i < n-1; i++)
+        for (int j = 0; j < n-i-1; j++)
+            if (arr[j]->id > arr[j+1]->id) {
+                Post *tmp = arr[j];
+                arr[j] = arr[j+1];
+                arr[j+1] = tmp;
+            }
+}
+
+void quick_sort_posts(Post **arr, int left, int right) {
+    if (left >= right) return;
+    int i = left, j = right;
+    int pivot = arr[(left + right) / 2]->likes;
+    while (i <= j) {
+        while (arr[i]->likes > pivot) i++;
+        while (arr[j]->likes < pivot) j--;
+        if (i <= j) {
+            Post *tmp = arr[i];
+            arr[i] = arr[j];
+            arr[j] = tmp;
+            i++; j--;
+        }
+    }
+    if (left < j) quick_sort_posts(arr, left, j);
+    if (i < right) quick_sort_posts(arr, i, right);
+}
+
+// [Searching: Binary Search] Binary search array post by ID
+int binary_search_post(Post **arr, int n, int id) {
+    int left = 0, right = n - 1;
+    while (left <= right) {
+        int mid = left + (right - left) / 2;
+        if (arr[mid]->id == id) return mid;
+        if (arr[mid]->id < id) left = mid + 1;
+        else right = mid - 1;
+    }
+    return -1;
+}
+
+// Tambahkan struct BST untuk User
+/* Duplicate definition of UserBSTNode removed */
+
+// [BST] Insert user ke BST User
+UserBSTNode* insert_user_bst(UserBSTNode *root, User *user) {
+    if (!root) {
+        UserBSTNode *node = (UserBSTNode*)malloc(sizeof(UserBSTNode));
+        node->user = user;
+        node->left = node->right = NULL;
+        return node;
+    }
+    if (strcmp(user->username, root->user->username) < 0)
+        root->left = insert_user_bst(root->left, user);
+    else if (strcmp(user->username, root->user->username) > 0)
+        root->right = insert_user_bst(root->right, user);
+    return root;
+}
+
+// [BST] Cari user pada BST User berdasarkan username
+User* search_user_bst(UserBSTNode *root, const char *username) {
+    if (!root) return NULL;
+    int cmp = strcmp(username, root->user->username);
+    if (cmp == 0) return root->user;
+    if (cmp < 0) return search_user_bst(root->left, username);
+    else return search_user_bst(root->right, username);
+}
+
+// Tambahkan struct BST untuk Comment
+
+// [BST] Insert comment ke BST Comment
+CommentBSTNode* insert_comment_bst(CommentBSTNode *root, Comment *comment) {
+    if (!root) {
+        CommentBSTNode *node = (CommentBSTNode*)malloc(sizeof(CommentBSTNode));
+        node->comment = comment;
+        node->left = node->right = NULL;
+        return node;
+    }
+    if (comment->id < root->comment->id)
+        root->left = insert_comment_bst(root->left, comment);
+    else if (comment->id > root->comment->id)
+        root->right = insert_comment_bst(root->right, comment);
+    return root;
+}
+
+// [BST] Cari comment pada BST Comment berdasarkan ID
+Comment* search_comment_bst(CommentBSTNode *root, int id) {
+    if (!root) return NULL;
+    if (id == root->comment->id) return root->comment;
+    if (id < root->comment->id) return search_comment_bst(root->left, id);
+    else return search_comment_bst(root->right, id);
+}
+
+// [Heap berdasarkan jumlah post user
+typedef struct {
+    User **arr;
+    int size;
+    int capacity;
+} UserHeap;
+
+// Implementasi heapify dan build heap mirip PostHeap, tapi berdasarkan jumlah post user
+
+// [Linked List] Free semua alokasi memori
 void free_all(AppState *app) {
     // Free users
     User *u = app->users;
@@ -873,6 +912,7 @@ void free_all(AppState *app) {
     }
 }
 
+// [Main] Entry point aplikasi
 int main() {
     AppState app = {0};
     app.users = NULL;
@@ -883,113 +923,22 @@ int main() {
     load_users(&app);
     load_posts(&app);
     load_comments(&app);
+
+    User *u = app.users;
+    app.userBST = NULL;
+    while (u) {
+        app.userBST = insert_user_bst(app.userBST, u);
+        u = u->next;
+    }
+
+    Comment *c = app.comments;
+    app.commentBST = NULL;
+    while (c) {
+        app.commentBST = insert_comment_bst(app.commentBST, c);
+        c = c->next;
+    }
+
     main_menu(&app);
     free_all(&app);
     return 0;
-}
-// Tambahkan ke menu heap Anda
-void pop_top_liked_post(AppState *app) {
-    int n = 0;
-    Post *p = app->posts;
-    while (p) { n++; p = p->next; }
-    if (n == 0) {
-        printf("\n>> Tidak ada post.\n");
-        return;
-    }
-    Post **arr = (Post**)malloc(sizeof(Post*) * n);
-    p = app->posts;
-    for (int i = 0; i < n; i++) {
-        arr[i] = p;
-        p = p->next;
-    }
-    // Urutkan dengan quick sort (descending by likes)
-    quick_sort_posts(arr, 0, n-1);
-
-    // Cari top liked post milik user sendiri
-    Post *top = NULL;
-    for (int i = 0; i < n; i++) {
-        if (arr[i]->user_id == app->current_user_id) {
-            top = arr[i];
-            break;
-        }
-    }
-    if (!top) {
-        printf("\n>> Tidak ada post Anda di daftar!\n");
-        free(arr);
-        return;
-    }
-    printf("\nMenghapus post dengan likes terbanyak milik Anda:\n");
-    printf("--------------------------------------------------\n");
-    printf("[%d] %s (%s) Likes: %d\n", top->id, top->content, top->media, top->likes);
-    printf("--------------------------------------------------\n");
-
-    // Hapus dari linked list
-    Post **pp = &app->posts;
-    while (*pp) {
-        if (*pp == top) {
-            Post *del = *pp;
-            *pp = del->next;
-            free(del);
-            app->post_count--;
-            break;
-        }
-        pp = &(*pp)->next;
-    }
-    save_posts(app);
-    free(arr);
-}
-
-// Unlike Post (BST)
-void unlike_post_bst(AppState *app) {
-    int likes;
-    printf("Masukkan jumlah likes post yang ingin di-unlike (BST): ");
-    scanf("%d", &likes);
-
-    // Bangun BST dari linked list post
-    PostBSTNode *bst = NULL;
-    Post *p = app->posts;
-    while (p) {
-        bst = post_bst_insert(bst, p);
-        p = p->next;
-    }
-
-    // Cari node BST dengan jumlah likes yang diinput
-    PostBSTNode *found = post_bst_search(bst, likes);
-    if (found && found->post->likes > 0) {
-        found->post->likes--;
-        save_posts(app);
-        printf("Unlike berhasil! Post [%d] sekarang likes: %d\n", found->post->id, found->post->likes);
-        char notif[MAX_STRING * 2];
-        snprintf(notif, sizeof(notif), "You unliked post ID %d (BST)", found->post->id);
-        enqueueNotif(app, notif);
-    } else if (found && found->post->likes == 0) {
-        printf("Likes sudah 0, tidak bisa di-unlike lagi.\n");
-    } else {
-        printf("Tidak ada post dengan likes %d\n", likes);
-    }
-    post_bst_free(bst);
-}
-
-// Menu untuk menghapus node BST berdasarkan likes
-void delete_bst_node_menu(AppState *app) {
-    int likes;
-    printf("Masukkan jumlah likes node BST yang ingin dihapus: ");
-    scanf("%d", &likes);
-
-    // Bangun BST dari linked list post
-    PostBSTNode *bst = NULL;
-    Post *p = app->posts;
-    while (p) {
-        bst = post_bst_insert(bst, p);
-        p = p->next;
-    }
-
-    int deleted = 0;
-    bst = post_bst_delete(bst, likes, &deleted);
-    if (deleted) {
-        printf("Node dengan likes %d berhasil dihapus dari BST (hanya di BST, data asli tidak berubah).\n", likes);
-    } else {
-        printf("Node dengan likes %d tidak ditemukan di BST.\n", likes);
-    }
-    post_bst_free(bst);
 }
