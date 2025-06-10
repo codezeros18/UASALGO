@@ -1,2 +1,1 @@
-2|1|mwahhh|rawr.png|1
-1|2|rawr|halo.png|0
+1|1|rawr semua|halo1.png|2

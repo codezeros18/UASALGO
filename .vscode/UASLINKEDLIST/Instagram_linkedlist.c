@@ -365,6 +365,9 @@ void save_comments(AppState *app) {
 }
 
 // --- Fitur ---
+// Function prototype for insert_user_bst
+UserBSTNode* insert_user_bst(UserBSTNode *root, User *user);
+
 int signup(AppState *app) {
     User u;
     u.id = app->user_count + 1;
@@ -376,6 +379,8 @@ int signup(AppState *app) {
     scanf(" %[^\n]", u.password);
     u.next = NULL;
     insert_user(app, u);
+    // Tambahkan baris berikut agar BST user ikut di-update
+    app->userBST = insert_user_bst(app->userBST, app->users); // app->users adalah user baru di head
     save_users(app);
     printf("Signup successful. Please login.\n");
     return -1;
